@@ -8,9 +8,9 @@ menu "OpenLager Configuration"
 
     config OPENLAGER_UART_RX_PIN
         int "UART RX Pin"
-        default 20
+        default 0
         help
-            GPIO pin for UART RX. Default is GPIO 20 (standard for Super Mini / C3).
+            GPIO pin for UART RX. Default is GPIO 0 (physically convenient, boot mode safe if FC TX is high).
 
     config OPENLAGER_LED_PIN
         int "Status LED Pin"
@@ -19,21 +19,21 @@ menu "OpenLager Configuration"
             GPIO pin for Status LED. Default is GPIO 8 (On-board Blue LED).
 
     menu "SPI Configuration"
-        config OPENLAGER_SPI_MOSI_PIN
-            int "SPI MOSI Pin"
-            default 3
-        
-        config OPENLAGER_SPI_MISO_PIN
-            int "SPI MISO Pin"
-            default 4
-        
-        config OPENLAGER_SPI_CLK_PIN
-            int "SPI CLK Pin"
-            default 2
-        
         config OPENLAGER_SPI_CS_PIN
             int "SPI CS Pin"
             default 1
+        
+        config OPENLAGER_SPI_MOSI_PIN
+            int "SPI MOSI Pin"
+            default 2
+        
+        config OPENLAGER_SPI_CLK_PIN
+            int "SPI CLK Pin"
+            default 3
+
+        config OPENLAGER_SPI_MISO_PIN
+            int "SPI MISO Pin"
+            default 4
     endmenu
 
 endmenu
