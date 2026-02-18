@@ -21,19 +21,19 @@ menu "OpenLager Configuration"
     menu "SPI Configuration"
         config OPENLAGER_SPI_CS_PIN
             int "SPI CS Pin"
-            default 1
+            default 4
         
         config OPENLAGER_SPI_MOSI_PIN
             int "SPI MOSI Pin"
-            default 2
+            default 3
         
         config OPENLAGER_SPI_CLK_PIN
             int "SPI CLK Pin"
-            default 3
+            default 2
 
         config OPENLAGER_SPI_MISO_PIN
             int "SPI MISO Pin"
-            default 4
+            default 1
     endmenu
 
 endmenu
