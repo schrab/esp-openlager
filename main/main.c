@@ -251,14 +251,18 @@ void app_main(void) {
         int idle_counter = 0;
         
         while (initial_len <= 0) {
-            // Blink LED while waiting for arm/data
-            led_set(true);
-            vTaskDelay(pdMS_TO_TICKS(100));
-            led_set(false);
+            // Heartbeat blink while waiting (Brief flash every 2s)
+            // idle_counter increments every loop iteration (~100ms)
+            // Blink ON at count 0, OFF at count 1. 2s period = 20 loops.
+            if (idle_counter == 0) {
+                 led_set(true); 
+            } else if (idle_counter == 1) {
+                 led_set(false);
+            }
             
-            // Every ~1s (10 loops), poke the SD card to keep it alive
+            // Every ~2s (20 loops), poke the SD card to keep it alive
             idle_counter++;
-            if (idle_counter >= 10) {
+            if (idle_counter >= 20) {
                 struct stat st;
                 if (stat(MOUNT_POINT, &st) != 0) {
                      // Keep alive failed, not critical but good to know
@@ -268,6 +272,9 @@ void app_main(void) {
 
             size_t available = 0;
             uart_get_buffered_data_len(UART_NUM, &available);
+            
+            // If checking frequently (100ms), we won't overflow 64KB buffer quickly.
+            // 2Mbps = 200KB/s. 100ms = 20KB. Buffer is 64KB. Safe.
             if (available > 0) {
                  initial_len = uart_read_bytes(UART_NUM, io_buffer, IO_BUF_SIZE, pdMS_TO_TICKS(100));
             } else {
