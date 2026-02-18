@@ -3,6 +3,7 @@
 #include <string.h>
 #include <sys/unistd.h>
 #include <sys/stat.h>
+#include <errno.h>
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_vfs_fat.h"
@@ -11,6 +12,8 @@
 #include "driver/sdspi_host.h"
 #include "sdmmc_cmd.h"
 #include "sdkconfig.h"
+#include <ctype.h>
+
 
 // Configuration from Kconfig
 #define UART_NUM                UART_NUM_1
@@ -46,7 +49,7 @@ void led_set(bool on) {
     gpio_set_level(LED_PIN, on ? 0 : 1); // Active Low
 }
 
-void led_panic(const char *msg) {
+void __attribute__((noreturn)) led_panic(const char *msg) {
     ESP_LOGE(TAG, "PANIC: %s", msg);
     while (1) {
         led_set(true);
@@ -60,19 +63,93 @@ void led_panic(const char *msg) {
     }
 }
 
-// Check for next available log file: log000.txt, log001.txt ...
-void get_log_filename(char *filename, size_t len) {
+// Check for next available log file: [prefix]000.bbl, [prefix]001.bbl ...
+void get_log_filename(char *filename, size_t len, const char *prefix) {
+    if (prefix == NULL || strlen(prefix) == 0) {
+        prefix = "log";
+    }
+    
     for (int i = 0; i < 1000; i++) {
-        snprintf(filename, len, "%s/log%03d.txt", MOUNT_POINT, i);
+        snprintf(filename, len, "%s/%s_%03d.bbl", MOUNT_POINT, prefix, i);
         struct stat st;
         if (stat(filename, &st) != 0) {
-            // File does not exist, use this one
+            // File does not exist, use this one (if ENOENT)
+            if (errno == ENOENT) {
+                return;
+            }
+            // Other error? Log it but maybe still try next?
+            ESP_LOGW(TAG, "stat failed for %s: %s", filename, strerror(errno));
+            // Should we continue or abort? Abort for EIO.
+            if (errno == EIO) {
+                led_panic("SD_ERR");
+            }
             return;
         }
     }
-    // If all full, overwrite log999.txt or just fail? 
+    // If all full, overwrite log999.bbl or just fail? 
     // Original behavior: Panic "FILES"
     led_panic("FILES");
+}
+
+// Function to sanitize filename
+// Replaces invalid chars with _. 
+// If strict_83 is true, enforces 8.3 format (max 8 chars, alnum only, uppercase)
+void sanitize_filename(char *name, bool strict_83) {
+    char *src = name;
+    char *dst = name;
+    int count = 0;
+    while (*src) {
+        char c = *src;
+        if (strict_83) {
+            c = toupper((unsigned char)c);
+            if (isalnum((unsigned char)c) || c == '_' || c == '-') {
+                if (count < 8) {
+                    *dst++ = c;
+                    count++;
+                }
+            }
+        } else {
+            // LFN: Allow slightly more but safe chars
+            if (isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.') {
+                *dst++ = c;
+            } else {
+                 // Replace spaces or others with _
+                 *dst++ = '_';
+            }
+        }
+        src++;
+    }
+    *dst = 0;
+}
+
+// Function to find "H Craft name:[Name]\n" in buffer
+// Returns true if found and populates craft_name
+bool find_craft_name(const uint8_t *buf, size_t len, char *craft_name, size_t max_name_len) {
+    const char *tag = "H Craft name:";
+    size_t tag_len = strlen(tag);
+    
+    // Simple search
+    for (size_t i = 0; i < len - tag_len; i++) {
+        if (memcmp(buf + i, tag, tag_len) == 0) {
+            // Found tag, now capture name until newline
+            size_t start = i + tag_len;
+            size_t end = start;
+            while (end < len && buf[end] != '\n' && buf[end] != '\r') {
+                end++;
+            }
+            
+            size_t name_len = end - start;
+            if (name_len > 0) {
+                if (name_len >= max_name_len) name_len = max_name_len - 1;
+                memcpy(craft_name, buf + start, name_len);
+                craft_name[name_len] = 0;
+                // Sanitize for LFN initially
+                sanitize_filename(craft_name, false);
+                return strlen(craft_name) > 0;
+            }
+        }
+    }
+    return false;
 }
 
 void app_main(void) {
@@ -156,61 +233,124 @@ void app_main(void) {
     if (ret != ESP_OK) led_panic("UART_PIN");
 
 
-    // --- 4. Open Log File ---
-    char filename[64];
-    get_log_filename(filename, sizeof(filename));
-    ESP_LOGI(TAG, "Opening file: %s", filename);
-
-    FILE *f = fopen(filename, "wb");
-    if (f == NULL) {
-        ESP_LOGE(TAG, "Failed to open file for writing");
-        led_panic("FOPEN");
-    }
-
-    // Allocate buffer
+    // Allocate buffer once
     io_buffer = (uint8_t *)malloc(IO_BUF_SIZE);
     if (!io_buffer) {
         led_panic("MALLOC");
     }
 
-    // --- 5. Main Loop ---
-    ESP_LOGI(TAG, "Starting logging loop...");
-    
-    // We want to write in chunks.
-    // If we receive data, we write it.
-    // If we don't receive data for a while, we fsync?
-    // High speed logging: 2Mbps ~= 200KB/s. 
-    // IO_BUF_SIZE is 16KB. That fills in ~80ms.
-
-    led_set(false); // Off when idle/working normally
-
+    // --- 5. Main Loop (Infinite Session Loop) ---
+    // Loop forever: Wait for data -> Open File -> Log -> Close File -> Repeat
     while (1) {
-        // Read from UART
-        // We handle the "chunking" by reading whatever is available up to buf size
-        // blocking for a short time (e.g. 10 ticks).
-        // If buffer fills up, SD write might be slow, so UART driver buffer (64K) handles the burst.
         
-        // Wait up to 20ms for data.
-        int len = uart_read_bytes(UART_NUM, io_buffer, IO_BUF_SIZE, pdMS_TO_TICKS(20));
-
-        if (len > 0) {
-            led_set(true); // Flash LED on write
-            size_t written = fwrite(io_buffer, 1, len, f);
-            if (written != len) {
-                ESP_LOGE(TAG, "Write error!");
-                led_panic("WRITE");
-            }
+        // --- A. Wait for Initial Data (ARMING) ---
+        ESP_LOGI(TAG, "Waiting for initial data (ARMING)...");
+        char craft_name[32] = {0};
+        char filename[128];
+        int initial_len = 0;
+        int idle_counter = 0;
+        
+        while (initial_len <= 0) {
+            // Blink LED while waiting for arm/data
+            led_set(true);
+            vTaskDelay(pdMS_TO_TICKS(100));
             led_set(false);
-        } else {
-            // No data for 20ms, maybe sync?
-            // Doing fsync too often is bad for performance/wear?
-            // But good for safety.
-            // Let's synced every 1s of inactivity? Or just let runtime handle it?
-            // For now, let's just flush every time we have a timeout if we wrote something recently.
-            // Actually, stdio buffering might hold data.
-            // Let's force flush if we had a pause.
-            fflush(f);
-            fsync(fileno(f));
+            
+            // Every ~1s (10 loops), poke the SD card to keep it alive
+            idle_counter++;
+            if (idle_counter >= 10) {
+                struct stat st;
+                if (stat(MOUNT_POINT, &st) != 0) {
+                     // Keep alive failed, not critical but good to know
+                }
+                idle_counter = 0;
+            }
+
+            size_t available = 0;
+            uart_get_buffered_data_len(UART_NUM, &available);
+            if (available > 0) {
+                 initial_len = uart_read_bytes(UART_NUM, io_buffer, IO_BUF_SIZE, pdMS_TO_TICKS(100));
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
         }
+        
+        ESP_LOGI(TAG, "Received initial data: %d bytes (ARMED)", initial_len);
+        
+        // --- B. Determine Filename ---
+        if (initial_len > 0) {
+            if (find_craft_name(io_buffer, initial_len, craft_name, sizeof(craft_name))) {
+                ESP_LOGI(TAG, "Found Craft Name: %s", craft_name);
+                get_log_filename(filename, sizeof(filename), craft_name); 
+            } else {
+                ESP_LOGI(TAG, "Craft Name not found in first chunk.");
+                get_log_filename(filename, sizeof(filename), "log");
+            }
+        } else {
+             get_log_filename(filename, sizeof(filename), "log");
+        }
+
+        ESP_LOGI(TAG, "Opening file: %s", filename);
+
+        // --- C. Open Log File ---
+        FILE *f = fopen(filename, "wb");
+        if (f == NULL) {
+            ESP_LOGE(TAG, "Failed to open file %s: %s. retrying fallback...", filename, strerror(errno));
+            get_log_filename(filename, sizeof(filename), "LOG");
+            f = fopen(filename, "wb");
+            if (f == NULL) {
+                 ESP_LOGE(TAG, "Fallback failed: %s", strerror(errno));
+                 led_panic("FOPEN");
+            }
+        }
+        
+        // Write the initial chunk
+        if (initial_len > 0) {
+            fwrite(io_buffer, 1, (size_t)initial_len, f);
+        }
+        
+        // --- D. Logging Loop ---
+        ESP_LOGI(TAG, "Logging started...");
+        led_set(false); 
+        
+        int silence_timeout_ms = 0;
+        
+        while (1) {
+            // Read from UART with short timeout (20ms)
+            int len = uart_read_bytes(UART_NUM, io_buffer, IO_BUF_SIZE, pdMS_TO_TICKS(20));
+
+            if (len > 0) {
+                silence_timeout_ms = 0; // Reset timeout
+                led_set(true); // Flash LED on write
+                
+                size_t written = fwrite(io_buffer, 1, (size_t)len, f);
+                if (written != (size_t)len) {
+                    ESP_LOGE(TAG, "Write error!");
+                    led_panic("WRITE");
+                }
+                led_set(false);
+            } else {
+                // No data received
+                silence_timeout_ms += 20;
+                
+                // If silent for > 2 seconds, assume DISARMED -> Close file
+                if (silence_timeout_ms > 2000) {
+                    ESP_LOGI(TAG, "No data for 2s (DISARMED). Closing file.");
+                    break; // Break inner loop to close file
+                }
+                
+                // Still flush occasionally during short pauses?
+                if (silence_timeout_ms % 500 == 0) {
+                    fflush(f);
+                    fsync(fileno(f));
+                }
+            }
+        }
+        
+        // --- E. Close File ---
+        fclose(f);
+        ESP_LOGI(TAG, "File closed. Returning to wait state.");
+        
+        // Loop back to A (Wait for Arming)
     }
 }

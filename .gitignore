@@ -10,3 +10,4 @@
 # Build cruft
 /build/
 /tools/
+/logs/
