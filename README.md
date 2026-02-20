@@ -1,24 +1,34 @@
-<img src="artwork/openlager.png" alt="openlager" width="200" height="200" align="left"/>
-STM32F4 based logging dongle for **HIGH RATE** logging
+# ESP-OpenLager (ESP32-C3 Port)
 
-This project is inspired by [OpenLog](https://github.com/sparkfun/OpenLog).
+High-speed UART logging to microSD card for ESP32-C3.
 
-*Why do something new?*  To attain higher rates!  The **openlager** hardware can accept data at high rates using slave SPI or fast async serial.  It uses a 4-wide SDIO interface to the card to support higher peak logging rates.  And the reasonable amount of memory buffer on the STM32F411 lets us ride out times when the SD card is busy erasing or doing other housekeeping without losing data.
+This is a port of the original [OpenLager](https://github.com/d-ronin/openlager) firmware to the ESP32-C3, enabling high-speed logging (up to 2Mbps) for Flight Controllers (Betaflight, etc.).
 
-The **openlager** hardware design and firmware are produced by the [dRonin](http://dronin.org) project, which produces high-quality flight controller software for drone racing and autonomous flight.  To log everything that's happening in a lossless fashion, high rate logs are required.  But we anticipate it being useful for a wide variety of applications.
+## Features
+- **High Speed**: Supports UART baud rates up to 2Mbps.
+- **Auto-Naming**: Automatically names log files based on the "Craft Name" sent in the Blackbox header.
+- **Session Management**: Automatically starts new log files when arming/disarming is detected (based on data flow).
+- **Heartbeat LED**: Slow heartbeat blink when disarmed, fast activity flicker when logging.
 
-# Licenses
+## Pinout (ESP32-C3 SuperMini)
+- **UART RX**: GPIO 0
+- **SD CS**: GPIO 1
+- **SD MOSI**: GPIO 2
+- **SD CLK**: GPIO 3
+- **SD MISO**: GPIO 4
+- **LED**: GPIO 8
 
-The **openlager** hardware in `hardware/` is licensed under a Creative Commons Attribution 4.0 International License (CC BY 4.0), as contained in `hardware/LICENSE.txt`
+## Getting Started
 
-The **openlager** firmware (and bootloader) in `src/`, `loader/`, and `shared/` is licensed under a simplified BSD license as found in `src/LICENSE.txt`
+### Prerequisites
+- ESP-IDF v5.x
 
-The openlager **logo** may only be used with permission from the dRonin project.
+### Build & Flash
+```bash
+idf.py set-target esp32c3
+idf.py build
+idf.py -p [PORT] flash monitor
+```
 
-The **fatfs** library in `libs/fatfs` is licensed under the one-clause BSD license as found in the source files in that directory.
-
-The **STM32F4xx_StdPeriph_Driver** library in `libs/STM32F4xx_StdPeriph_Driver` is largely licensed under a restrictive license that limits its usage to ST family processors.  To use this software on non-ST parts, the dependency on this library code must be removed.  Portions of this code (the `core_cm*` include headers) are licensed under a permissive 3 clause BSD license from ARM, as noted in the individual files.
-
-The **mmcreg.h** file from FreeBSD in `libs/inc` is licensed under a simplified BSD license.
-
-The **jsmn** library in `libs` is licensed under the MIT license.
+## License
+Simplified BSD license. See `main/main.c` for details.

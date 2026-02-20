@@ -1,3 +1,0 @@
-(fp_lib_table
-  (lib (name openLagerFootprints)(type KiCad)(uri "$(KIPRJMOD)\\openLagerFootprints.pretty")(options "")(descr ""))
-)
