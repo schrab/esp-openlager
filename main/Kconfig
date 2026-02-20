@@ -8,9 +8,9 @@ menu "OpenLager Configuration"
 
     config OPENLAGER_UART_RX_PIN
         int "UART RX Pin"
-        default 0
+        default 20
         help
-            GPIO pin for UART RX. Default is GPIO 0 (physically convenient, boot mode safe if FC TX is high).
+            GPIO pin for UART RX. Default is GPIO 20 (standard for Super Mini / C3).
 
     config OPENLAGER_LED_PIN
         int "Status LED Pin"

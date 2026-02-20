@@ -11,7 +11,7 @@ This is a port of the original [OpenLager](https://github.com/d-ronin/openlager)
 - **Heartbeat LED**: Slow heartbeat blink when disarmed, fast activity flicker when logging.
 
 ## Pinout (ESP32-C3 SuperMini)
-- **UART RX**: GPIO 0
+- **UART RX**: GPIO 20
 - **SD CS**: GPIO 1
 - **SD MOSI**: GPIO 2
 - **SD CLK**: GPIO 3
